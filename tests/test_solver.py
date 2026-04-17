@@ -112,20 +112,30 @@ class TestNewtonianSolver:
         assert result.iterations == 1
     
     def test_pressure_boundary_conditions(self, standard_setup):
-        """Test that pressure satisfies boundary conditions."""
+        """Test that pressure satisfies Dirichlet BCs at the physical boundary.
+
+        With cell-centred nodes and ghost-node BC treatment, the first
+        interior node sits at R_in + dr/2, so p[0, :] differs from
+        p_supply by an O(dr) offset.  The Dirichlet value is imposed at
+        the physical boundary r = R_in via the ghost constraint
+        (p[-1] + p[0]) / 2 = p_supply.  Linear extrapolation from the
+        two nearest cell centres reconstructs the imposed boundary
+        value to within the O(dr²) truncation error of the scheme.
+        """
         mesh, geom, conditions = standard_setup
         eta = 0.05
-        
+
         result = solve_newtonian(mesh, geom, conditions, eta)
-        
-        # Inner boundary should be at supply pressure
-        p_inner = result.pressure[0, :]
-        assert np.allclose(p_inner, conditions.p_supply, rtol=0.01)
-        
-        # Outer boundary should be at ambient pressure
-        p_outer = result.pressure[-1, :]
+
+        # Linear extrapolation from cell centres to the physical boundary.
+        p_at_Rin = 1.5 * result.pressure[0, :] - 0.5 * result.pressure[1, :]
+        p_at_Rout = 1.5 * result.pressure[-1, :] - 0.5 * result.pressure[-2, :]
+
         p_ambient = conditions.p_ambient if hasattr(conditions, 'p_ambient') else 0.0
-        assert np.allclose(p_outer, p_ambient, rtol=0.01)
+
+        assert np.allclose(p_at_Rin, conditions.p_supply, rtol=0.01)
+        # Use atol relative to the driving pressure for the zero-pressure outer BC.
+        assert np.allclose(p_at_Rout, p_ambient, atol=0.01 * conditions.p_supply)
     
     def test_pressure_decreases_radially(self, standard_setup):
         """Test that pressure decreases from inner to outer radius."""

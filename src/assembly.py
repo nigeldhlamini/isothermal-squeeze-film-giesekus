@@ -39,86 +39,208 @@ def build_diffusion_operator(
 ) -> csr_matrix:
     """
     Build the generalised diffusion operator in polar coordinates.
-    
+
     Discretises:
         L[p] = (1/r)∂/∂r(r·D·∂p/∂r) + (1/r²)∂/∂θ(D·∂p/∂θ)
-    
+
     This is the standard form for Reynolds equation with D = h³/(12η).
-    
+
     Parameters
     ----------
     mesh : PolarMesh
         Computational mesh
     D_coeff : ndarray
         Diffusion coefficient field, shape (Nr, Ntheta)
-    
+
     Returns
     -------
     L : csr_matrix
         Sparse diffusion operator, shape (N, N)
-    
+
     Notes
     -----
-    Uses second-order central differences with harmonic averaging
-    of diffusion coefficients at cell faces.
+    Uses second-order central differences with harmonic averaging of
+    diffusion coefficients at cell faces.  Boundary nodes (i = 0 and
+    i = Nr-1) use a ghost-node stencil that enforces a Dirichlet value
+    at the PHYSICAL boundary r = R_in / R_out to second order.
+
+    For a cell-centred mesh the boundary r = R_in lies exactly
+    half-way between the ghost node (i = -1, r = R_in - dr/2) and the
+    first interior node (i = 0, r = R_in + dr/2).  Linear interpolation
+    gives p(R_in) = (p[-1] + p[0]) / 2 to O(dr²).  Enforcing the
+    Dirichlet condition p(R_in) = p_inner yields the ghost value
+    p[-1] = 2·p_inner − p[0].  Substituting into the standard 3-point
+    radial stencil eliminates p[-1]; the coefficient on p[0] picks up
+    an extra factor of 2 on the boundary face contribution, and the
+    Dirichlet value moves to the RHS via ``compute_ghost_bc_rhs``.
+
+    With this treatment the truncation error at boundary-adjacent
+    nodes is O(dr²), preserving second-order global accuracy.  The
+    extrapolated ghost coefficient D[-1] = D[0] is used at the
+    boundary face (no harmonic averaging is needed because both
+    virtual values coincide).
     """
     Nr, Ntheta = mesh.Nr, mesh.Ntheta
     N = mesh.N
     dr, dtheta = mesh.dr, mesh.dtheta
     r = mesh.R  # 2D array of radial positions
-    
+
     # Build matrix in LIL format for efficient construction
     L = lil_matrix((N, N), dtype=float)
-    
+
     for i in range(Nr):
         for j in range(Ntheta):
             k = mesh._index(i, j)
             r_ij = r[i, j]
             D_ij = D_coeff[i, j]
-            
+
             # Neighbour indices (with periodic BC in theta)
             j_plus = (j + 1) % Ntheta
             j_minus = (j - 1) % Ntheta
-            
+
             # === Radial diffusion: (1/r)∂/∂r(r·D·∂p/∂r) ===
-            if i > 0 and i < Nr - 1:
-                # Interior point
+            r_ip_half = r_ij + dr/2  # r at i+1/2
+            r_im_half = r_ij - dr/2  # r at i-1/2
+
+            if i == 0:
+                # Inner boundary — ghost-node stencil.
+                # Ghost at i = -1 eliminated via p[-1] = 2·p_inner - p[0].
+                D_ip = D_coeff[i+1, j]
+                D_ip_half = 2 * D_ij * D_ip / (D_ij + D_ip + 1e-30)
+                # At the boundary face D[-1] = D[0] (zero-gradient extrapolation
+                # of the material property); harmonic mean of equal values = D[0].
+                D_im_half = D_ij
+
+                coeff_ip = (r_ip_half * D_ip_half) / (r_ij * dr**2)
+                coeff_im = (r_im_half * D_im_half) / (r_ij * dr**2)
+
+                # Substituting p[-1] = 2·p_inner - p[0] into the 3-point stencil:
+                #   coeff_ip·p[1] + coeff_im·p[-1] - (coeff_ip+coeff_im)·p[0]
+                # = coeff_ip·p[1] - coeff_ip·p[0] - 2·coeff_im·p[0] + 2·coeff_im·p_inner
+                # The last term is moved to the RHS by compute_ghost_bc_rhs.
+                L[k, mesh._index(i+1, j)] += coeff_ip
+                L[k, k] += -coeff_ip - 2 * coeff_im
+
+            elif i == Nr - 1:
+                # Outer boundary — ghost-node stencil.
+                # Ghost at i = Nr eliminated via p[Nr] = 2·p_outer - p[Nr-1].
+                D_im = D_coeff[i-1, j]
+                D_im_half = 2 * D_ij * D_im / (D_ij + D_im + 1e-30)
+                D_ip_half = D_ij  # D[Nr] = D[Nr-1] extrapolation
+
+                coeff_ip = (r_ip_half * D_ip_half) / (r_ij * dr**2)
+                coeff_im = (r_im_half * D_im_half) / (r_ij * dr**2)
+
+                L[k, mesh._index(i-1, j)] += coeff_im
+                L[k, k] += -coeff_im - 2 * coeff_ip
+
+            else:
+                # Interior point — standard 3-point central stencil.
                 D_ip = D_coeff[i+1, j]
                 D_im = D_coeff[i-1, j]
-                r_ip_half = r_ij + dr/2  # r at i+1/2
-                r_im_half = r_ij - dr/2  # r at i-1/2
-                
+
                 # Harmonic average at faces
                 D_ip_half = 2 * D_ij * D_ip / (D_ij + D_ip + 1e-30)
                 D_im_half = 2 * D_ij * D_im / (D_ij + D_im + 1e-30)
-                
+
                 # Coefficients
                 coeff_ip = (r_ip_half * D_ip_half) / (r_ij * dr**2)
                 coeff_im = (r_im_half * D_im_half) / (r_ij * dr**2)
                 coeff_center_r = -(coeff_ip + coeff_im)
-                
+
                 L[k, mesh._index(i+1, j)] += coeff_ip
                 L[k, mesh._index(i-1, j)] += coeff_im
                 L[k, k] += coeff_center_r
-            
+
             # === Azimuthal diffusion: (1/r²)∂/∂θ(D·∂p/∂θ) ===
             D_jp = D_coeff[i, j_plus]
             D_jm = D_coeff[i, j_minus]
-            
+
             # Harmonic average at faces
             D_jp_half = 2 * D_ij * D_jp / (D_ij + D_jp + 1e-30)
             D_jm_half = 2 * D_ij * D_jm / (D_ij + D_jm + 1e-30)
-            
+
             # Coefficients
             coeff_jp = D_jp_half / (r_ij**2 * dtheta**2)
             coeff_jm = D_jm_half / (r_ij**2 * dtheta**2)
             coeff_center_theta = -(coeff_jp + coeff_jm)
-            
+
             L[k, mesh._index(i, j_plus)] += coeff_jp
             L[k, mesh._index(i, j_minus)] += coeff_jm
             L[k, k] += coeff_center_theta
-    
+
     return L.tocsr()
+
+
+def compute_ghost_bc_rhs(
+    mesh: PolarMesh,
+    D_coeff: np.ndarray,
+    bc_inner: float,
+    bc_outer: float,
+) -> np.ndarray:
+    """
+    Compute the RHS correction that enforces Dirichlet ghost-node BCs.
+
+    After ``build_diffusion_operator`` folds the ghost unknowns out of
+    the boundary rows, the inhomogeneous part of the Dirichlet
+    condition becomes a constant source term that must be subtracted
+    from the RHS of the linear system.  Specifically, the boundary
+    stencils produce
+
+        L[p] + 2·coeff_im·p_inner      at i = 0,
+        L[p] + 2·coeff_ip·p_outer      at i = Nr-1,
+
+    so the correction vector ``b_corr`` has
+
+        b_corr[0, j]    = -2·coeff_im(0, j) · p_inner
+        b_corr[Nr-1, j] = -2·coeff_ip(Nr-1, j) · p_outer
+
+    and the system is solved as ``L · p = b_source + b_corr``.
+
+    The function is linear in ``D_coeff``, so contributions from
+    multiple additive operators (GNF + memory + …) can be combined by
+    summing their effective D fields and calling this once.
+
+    Parameters
+    ----------
+    mesh : PolarMesh
+        Computational mesh
+    D_coeff : ndarray
+        Effective diffusion coefficient field, shape (Nr, Ntheta),
+        matching the operator whose boundary rows need correcting.
+    bc_inner : float
+        Dirichlet value at r = R_in
+    bc_outer : float
+        Dirichlet value at r = R_out
+
+    Returns
+    -------
+    b_corr : ndarray
+        RHS correction vector, shape (N,).
+    """
+    Nr, Ntheta = mesh.Nr, mesh.Ntheta
+    dr = mesh.dr
+    b_corr = np.zeros(mesh.N)
+
+    # Inner boundary (i = 0): r_{-1/2} = R_in, D[-1] = D[0] extrapolation.
+    for j in range(Ntheta):
+        k = mesh._index(0, j)
+        r_0 = mesh.R[0, j]
+        r_im_half = r_0 - dr / 2  # physical boundary R_in
+        D_im_half = D_coeff[0, j]
+        coeff_im = (r_im_half * D_im_half) / (r_0 * dr**2)
+        b_corr[k] -= 2.0 * coeff_im * bc_inner
+
+    # Outer boundary (i = Nr-1): r_{Nr-1/2} = R_out, D[Nr] = D[Nr-1].
+    for j in range(Ntheta):
+        k = mesh._index(Nr - 1, j)
+        r_N = mesh.R[Nr - 1, j]
+        r_ip_half = r_N + dr / 2  # physical boundary R_out
+        D_ip_half = D_coeff[Nr - 1, j]
+        coeff_ip = (r_ip_half * D_ip_half) / (r_N * dr**2)
+        b_corr[k] -= 2.0 * coeff_ip * bc_outer
+
+    return b_corr
 
 
 def build_GNF_operator(
@@ -517,21 +639,24 @@ def assemble_newtonian_system(
     R, THETA = mesh.R, mesh.THETA
     h = geometry.gap_height(R, THETA)
     eta_bar = eta * np.ones_like(h)
-    
-    # Build GNF operator
-    A_GNF = build_GNF_operator(mesh, h, eta_bar)
-    
+
+    # Build GNF operator (ghost-node stencils at boundaries — see
+    # build_diffusion_operator docstring).  The Dirichlet values enter
+    # the linear system through compute_ghost_bc_rhs below, not by
+    # overwriting boundary rows.
+    D_GNF = h**3 / (12 * eta_bar)
+    A_GNF = build_diffusion_operator(mesh, D_GNF)
+
     # Compute source
     b = compute_source_vector(mesh, geometry, conditions)
-    
-    # Apply boundary conditions
+
+    # Apply ghost-node Dirichlet BCs (O(h²) accurate)
     p_inner = conditions.p_supply if hasattr(conditions, 'p_supply') else 0.0
     p_outer = conditions.p_ambient if hasattr(conditions, 'p_ambient') else 0.0
-    
-    A, b = mesh.apply_dirichlet_bc(A_GNF, b, p_inner, p_outer)
-    
+    b = b + compute_ghost_bc_rhs(mesh, D_GNF, p_inner, p_outer)
+
     return AssembledSystem(
-        A=A, b=b, A_GNF=A_GNF,
+        A=A_GNF, b=b, A_GNF=A_GNF,
         info={'type': 'newtonian', 'eta': eta}
     )
 
@@ -568,21 +693,21 @@ def assemble_GNF_system(
     """
     R, THETA = mesh.R, mesh.THETA
     h = geometry.gap_height(R, THETA)
-    
-    # Build GNF operator with current viscosity
-    A_GNF = build_GNF_operator(mesh, h, eta_bar)
-    
+
+    # Build GNF operator with current viscosity (ghost-node stencils)
+    D_GNF = h**3 / (12 * eta_bar)
+    A_GNF = build_diffusion_operator(mesh, D_GNF)
+
     # Compute source
     b = compute_source_vector(mesh, geometry, conditions)
-    
-    # Apply boundary conditions
+
+    # Apply ghost-node Dirichlet BCs
     p_inner = conditions.p_supply if hasattr(conditions, 'p_supply') else 0.0
     p_outer = conditions.p_ambient if hasattr(conditions, 'p_ambient') else 0.0
-    
-    A, b = mesh.apply_dirichlet_bc(A_GNF, b, p_inner, p_outer)
-    
+    b = b + compute_ghost_bc_rhs(mesh, D_GNF, p_inner, p_outer)
+
     return AssembledSystem(
-        A=A, b=b, A_GNF=A_GNF,
+        A=A_GNF, b=b, A_GNF=A_GNF,
         info={'type': 'GNF'}
     )
 
@@ -636,20 +761,28 @@ def assemble_viscoelastic_system(
     """
     R, THETA = mesh.R, mesh.THETA
     h = geometry.gap_height(R, THETA)
-    
-    # Build GNF operator
-    A_GNF = build_GNF_operator(mesh, h, eta_bar)
+
+    # Build GNF operator (ghost-node stencils).  The effective D for
+    # the BC correction accumulates GNF + memory contributions.
+    D_GNF = h**3 / (12 * eta_bar)
+    A_GNF = build_diffusion_operator(mesh, D_GNF)
     A = A_GNF.copy()
     A_mem = None
-    
+    D_eff_boundary = D_GNF.copy()
+
     # Add memory operator if requested
     if include_memory and not fluid.is_newtonian:
         eta_T = fluid.tangent_viscosity(gdot_bar)
-        A_mem = build_memory_operator(
-            mesh, h, eta_bar, eta_T, 
-            conditions.h_dot, fluid.lambda_
-        )
+        # Memory operator has the same divergence form with a signed
+        # prefactor multiplying its own D field.  Building it via
+        # build_diffusion_operator ensures consistent ghost stencils.
+        mem_prefactor = -fluid.lambda_ * conditions.h_dot / 16
+        D_mem = h**2 * eta_T / eta_bar**2
+        A_mem = mem_prefactor * build_diffusion_operator(mesh, D_mem)
         A = A + A_mem
+        # The combined effective D at the boundary face for the BC
+        # correction is D_GNF + mem_prefactor · D_mem.
+        D_eff_boundary = D_eff_boundary + mem_prefactor * D_mem
     
     # Compute base source term
     b = compute_source_vector(mesh, geometry, conditions)
@@ -693,12 +826,13 @@ def assemble_viscoelastic_system(
             )
             b = b + ns_scale * S_alpha
     
-    # Apply boundary conditions
+    # Apply ghost-node Dirichlet BCs.  The effective boundary D folds
+    # in both GNF and memory contributions so a single correction
+    # captures both operators exactly.
     p_inner = conditions.p_supply if hasattr(conditions, 'p_supply') else 0.0
     p_outer = conditions.p_ambient if hasattr(conditions, 'p_ambient') else 0.0
-    
-    A, b = mesh.apply_dirichlet_bc(A, b, p_inner, p_outer)
-    
+    b = b + compute_ghost_bc_rhs(mesh, D_eff_boundary, p_inner, p_outer)
+
     return AssembledSystem(
         A=A, b=b, A_GNF=A_GNF, A_mem=A_mem,
         info={
