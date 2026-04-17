@@ -43,8 +43,6 @@ from .geometry import (
 )
 from .rheology import (
     create_newtonian,
-    create_PAM_2pct,
-    create_PAM_5pct
 )
 
 # Verification utilities
@@ -56,15 +54,6 @@ from .verification import (
     convergence_study as grid_convergence_study,
     format_convergence_table,
 )
-from .uncertainty import (
-    parameter_sensitivity,
-    propagate_input_uncertainty,
-    compute_uncertainty_budget,
-    format_uncertainty_budget,
-    SensitivityResult,
-    UncertaintyBudget,
-)
-
 # Results
 from .results import (
     SolverResult, 
@@ -128,8 +117,6 @@ __all__ = [
     'create_tilted_slipper',
     'create_standard_operating_conditions',
     'create_newtonian',
-    'create_PAM_2pct',
-    'create_PAM_5pct',
     
     # Verification
     'verify_psi_ratio',
@@ -140,14 +127,6 @@ __all__ = [
     'RichardsonResult',
     'grid_convergence_study',
     'format_convergence_table',
-
-    # Uncertainty quantification
-    'parameter_sensitivity',
-    'propagate_input_uncertainty',
-    'compute_uncertainty_budget',
-    'format_uncertainty_budget',
-    'SensitivityResult',
-    'UncertaintyBudget',
 
     # Results
     'SolverResult',

@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, '.')
 
 from src import (
-    create_PAM_5pct,
+    GiesekusFluid,
     create_standard_slipper,
     PolarMesh,
     SolverConfig,
@@ -27,9 +27,11 @@ def main():
     print("=" * 60)
     print("Giesekus Viscoelastic Reynolds Equation Solver")
     print("=" * 60)
-    
-    # Create fluid model (5% PAM solution)
-    fluid = create_PAM_5pct()
+
+    # Representative Giesekus fluid (5% PAM in water-glycol parameters)
+    # eta_0 = 0.150 Pa.s, eta_s = 0.030 Pa.s, lambda = 3.3 ms, alpha = 0.25
+    fluid = GiesekusFluid(eta_s=0.030, eta_p=0.120,
+                          lambda_=3.3e-3, alpha=0.25)
     print(f"\nFluid Properties:")
     print(f"  Zero-shear viscosity η₀ = {fluid.eta_0:.3f} Pa·s")
     print(f"  Solvent viscosity η_s   = {fluid.eta_s:.3f} Pa·s")

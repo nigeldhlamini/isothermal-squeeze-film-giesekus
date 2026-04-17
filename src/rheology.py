@@ -514,26 +514,6 @@ def create_newtonian(eta: float = 0.030) -> GiesekusFluid:
     return GiesekusFluid(eta_s=eta, eta_p=0.0, lambda_=0.0, alpha=0.0)
 
 
-def create_PAM_2pct() -> GiesekusFluid:
-    """
-    Create 2% PAM (polyacrylamide) in water-glycol.
-    
-    From Table 1:
-        η₀ = 0.050 Pa·s, η_s = 0.030 Pa·s, λ = 1.0 ms, α = 0.25
-    """
-    return GiesekusFluid(eta_s=0.030, eta_p=0.020, lambda_=1.0e-3, alpha=0.25)
-
-
-def create_PAM_5pct() -> GiesekusFluid:
-    """
-    Create 5% PAM (polyacrylamide) in water-glycol.
-    
-    From Table 1:
-        η₀ = 0.150 Pa·s, η_s = 0.030 Pa·s, λ = 3.3 ms, α = 0.25
-    """
-    return GiesekusFluid(eta_s=0.030, eta_p=0.120, lambda_=3.3e-3, alpha=0.25)
-
-
 # =============================================================================
 # SOF (Second-Order Fluid) as Limiting Case
 # =============================================================================

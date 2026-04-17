@@ -15,9 +15,19 @@ sys.path.insert(0, '.')
 
 from src.rheology import (
     GiesekusFluid, SOFFluid,
-    create_newtonian, create_PAM_2pct, create_PAM_5pct,
+    create_newtonian,
     verify_psi_ratio, verify_sof_limit
 )
+
+
+def create_PAM_2pct() -> GiesekusFluid:
+    """Local test fixture: moderate-shear-thinning Giesekus fluid (2% PAM params)."""
+    return GiesekusFluid(eta_s=0.030, eta_p=0.020, lambda_=1.0e-3, alpha=0.25)
+
+
+def create_PAM_5pct() -> GiesekusFluid:
+    """Local test fixture: representative Giesekus fluid (5% PAM params)."""
+    return GiesekusFluid(eta_s=0.030, eta_p=0.120, lambda_=3.3e-3, alpha=0.25)
 
 
 class TestGiesekusFluidBasics:
