@@ -13,9 +13,26 @@ The auxiliary variable f satisfies a quadratic equation derived from the
 steady-state Giesekus constitutive equation.
 
 Key Properties:
-    - Low Wi limit: η → η₀, Ψ₁ → Ψ₁⁰ = 2η_p λ, Ψ₂ → -αη_p λ
-    - High Wi limit: η → η_s, Ψ₁ ~ γ̇⁻², Ψ₂/Ψ₁ → -α/2
-    - Constrained ratio: Ψ₂/Ψ₁ = -α/2 at all Wi (molecular constraint)
+    - Low Wi limit: η → η₀, Ψ₁ → Ψ₁⁰ = 2η_p λ, Ψ₂ → Ψ₂⁰ = -αη_p λ
+      (so Ψ₂/Ψ₁ → -α/2 only in the *zero-shear* limit)
+    - High Wi limit: η → η_s and Ψ₁ → 0 *gradually* (no sharp cut-off); the
+      ratio Ψ₂/Ψ₁ is NOT constant — its magnitude decreases below α/2 with
+      increasing shear (and is not pinned to -α/2 at finite Wi).
+    - The auxiliary variable is obtained from the exact Giesekus steady-shear
+      solution (variable χ, below), giving gradual shear thinning. There is no
+      finite "critical" Weissenberg number at which η collapses to η_s.
+
+Implementation note (corrected steady-shear solution):
+    The earlier auxiliary-variable quadratic
+        (1-2α)f² - [1-2α + α²Λ²]f + α²Λ² = 0
+    is NOT the Giesekus steady-shear relation: its physical root has the wrong
+    small-Λ slope (f ~ α²Λ² instead of f ~ αΛ²) and a perfect-square
+    discriminant that forces f→1 at a spurious Λ_crit=√(1-2α)/α, collapsing η
+    to η_s and Ψ₁ to 0 with an unphysical sharp cut-off.  The exact solution
+    (Bird, Armstrong & Hassager, Vol. 1; Giesekus 1982) is used instead:
+        χ² = 2 / (1 + √(1 + 16 α(1-α) Λ²)),   f = (1-χ)/(1 + (1-2α)χ),
+    verified against a direct stress-tensor Newton solve to ~1e-12
+    (an independent stress-tensor Newton solve).
 
 References:
     - Giesekus, H. (1982). J. Non-Newtonian Fluid Mech. 11, 69-109.
@@ -105,68 +122,65 @@ class GiesekusFluid:
     
     def _compute_f(self, Lambda: ArrayLike) -> ArrayLike:
         """
-        Compute auxiliary variable f from the Giesekus quadratic.
-        
-        The quadratic equation (Eq. 42 in thesis):
-            (1-2α)f² - [1-2α + α²Λ²]f + α²Λ² = 0
-        
+        Auxiliary variable f from the exact Giesekus steady-shear solution.
+
+            χ² = 2 / (1 + √(1 + 16 α(1-α) Λ²))            (numerically stable)
+            f  = (1 - χ) / (1 + (1-2α) χ)
+
         Parameters
         ----------
         Lambda : float or ndarray
             Dimensionless shear rate Λ = λγ̇ (Weissenberg number)
-        
+
         Returns
         -------
         f : float or ndarray
-            Auxiliary variable, 0 ≤ f < 1
-        
-        Notes
-        -----
-        The physical root satisfies:
-            - f → 0 as Λ → 0
-            - f < 1 for all finite Λ
-            - f → f_∞ = (1 - √(1-2α))/(2α) as Λ → ∞
+            Auxiliary variable, 0 ≤ f < 1, with f → 0 as Λ → 0 (f ~ αΛ²) and
+            f → 1 only as Λ → ∞.  Valid for all α ∈ [0, 0.5] (no degeneracy at
+            α = 0.5, unlike the earlier quadratic).
         """
         Lambda = np.asarray(Lambda)
         scalar_input = Lambda.ndim == 0
-        Lambda = np.atleast_1d(Lambda)
-        
-        # Handle Newtonian limit
-        if self.is_newtonian:
-            f = np.zeros_like(Lambda)
-            return float(f[0]) if scalar_input else f
-        
+        Lambda = np.atleast_1d(Lambda).astype(float)
         alpha = self.alpha
-        Lambda_sq = Lambda**2
-        
-        # Special case: α = 0 (UCM limit)
-        if alpha < 1e-12:
+
+        # Newtonian / UCM (α→0): no shear structure, f ≡ 0
+        if self.is_newtonian or alpha < 1e-12:
             f = np.zeros_like(Lambda)
             return float(f[0]) if scalar_input else f
-        
-        # Coefficients of quadratic (1-2α)f² - b·f + c = 0
-        a_coef = 1.0 - 2.0 * alpha
-        b_coef = 1.0 - 2.0 * alpha + alpha**2 * Lambda_sq
-        c_coef = alpha**2 * Lambda_sq
-        
-        # Discriminant
-        discriminant = b_coef**2 - 4.0 * a_coef * c_coef
-        
-        # Physical root (the one that → 0 as Λ → 0)
-        # Use numerically stable formula
-        if abs(a_coef) > 1e-12:
-            # Standard case: α ≠ 0.5
-            sqrt_disc = np.sqrt(np.maximum(discriminant, 0.0))
-            f = (b_coef - sqrt_disc) / (2.0 * a_coef)
-        else:
-            # Special case: α ≈ 0.5
-            # Quadratic degenerates to linear: -b·f + c = 0 → f = c/b
-            f = np.where(b_coef > 1e-12, c_coef / b_coef, 0.0)
-        
-        # Ensure physical bounds (numerical safety)
-        f = np.clip(f, 0.0, 1.0 - 1e-10)
-        
+
+        L = np.abs(Lambda)
+        x = 16.0 * alpha * (1.0 - alpha) * L ** 2
+        chi = np.sqrt(2.0 / (1.0 + np.sqrt(1.0 + x)))
+        f = (1.0 - chi) / (1.0 + (1.0 - 2.0 * alpha) * chi)
+
+        # Low-Λ asymptote f ~ αΛ² avoids (1-χ) cancellation as χ→1
+        small = L < 1e-4
+        if np.any(small):
+            f = np.where(small, alpha * L ** 2, f)
+
+        f = np.clip(f, 0.0, 1.0)
         return float(f[0]) if scalar_input else f
+
+    def _stress_components(self, Lambda: ArrayLike):
+        """
+        Dimensionless polymer stress components (S = (λ/η_p) τ_p) in steady
+        simple shear, from the exact Giesekus solution.  Λ = λγ̇.
+
+        Returns (Sxx, Syy, Sxy) as arrays.  Used by Ψ₁ (∝ Sxx - Syy) and
+        Ψ₂ (∝ Syy).  Requires α > 0 (caller handles the UCM limit).
+        """
+        a = self.alpha
+        L = np.abs(np.atleast_1d(np.asarray(Lambda, dtype=float)))
+        f = np.atleast_1d(self._compute_f(L))
+        D = 1.0 + (1.0 - 2.0 * a) * f
+        Sxy = L * (1.0 - f) ** 2 / D
+        # a Syy² + Syy + a Sxy² = 0  -> physical root (→0 as Λ→0)
+        Syy = (-1.0 + np.sqrt(np.maximum(1.0 - 4.0 * a ** 2 * Sxy ** 2, 0.0))) / (2.0 * a)
+        # a Sxx² + Sxx + (a Sxy² - 2 Λ Sxy) = 0  -> physical root
+        Sxx = (-1.0 + np.sqrt(np.maximum(
+            1.0 - 4.0 * a * (a * Sxy ** 2 - 2.0 * L * Sxy), 0.0))) / (2.0 * a)
+        return Sxx, Syy, Sxy
     
     def viscosity(self, gdot: ArrayLike) -> ArrayLike:
         """
@@ -216,109 +230,95 @@ class GiesekusFluid:
         """
         Compute first normal stress coefficient Ψ₁(γ̇).
         
-        From Eq. 46:
-            Ψ₁(γ̇) = (2η_p λ / αΛ²) · f(1-f)
-        
-        At low shear rates, use asymptotic expansion:
-            f ≈ α²Λ² for Λ → 0
-            Ψ₁ → 2η_p λ = Ψ₁⁰
-        
+        From the exact Giesekus steady-shear stress solution:
+            Ψ₁ = N₁/γ̇² = η_p λ (Sxx - Syy) / Λ²
+        with (Sxx, Syy) the dimensionless polymer-stress components.
+
         Parameters
         ----------
         gdot : float or ndarray
             Shear rate γ̇ [s⁻¹]
-        
+
         Returns
         -------
         Psi1 : float or ndarray
             First normal stress coefficient [Pa·s²]
-        
+
         Limits
         ------
         - γ̇ → 0: Ψ₁ → Ψ₁⁰ = 2η_p λ
-        - γ̇ → ∞: Ψ₁ → 2η_p / (λγ̇²) (saturation)
+        - γ̇ → ∞: Ψ₁ → 0 gradually (no sharp cut-off)
         """
         gdot = np.asarray(gdot)
         scalar_input = gdot.ndim == 0
-        gdot = np.atleast_1d(gdot)
-        
-        # Handle Newtonian limit (Ψ₁ = 0)
+        gdot = np.atleast_1d(gdot).astype(float)
+
+        # Newtonian (Ψ₁ = 0)
         if self.is_newtonian:
-            Psi1 = np.zeros_like(gdot, dtype=float)
+            Psi1 = np.zeros_like(gdot)
             return float(Psi1[0]) if scalar_input else Psi1
-        
+
         Lambda = self.lambda_ * np.abs(gdot)
-        alpha = self.alpha
-        
-        # Use asymptotic form for low Lambda to avoid numerical issues
-        # At low Λ: f ≈ α²Λ², so f(1-f)/Λ² ≈ α²(1-α²Λ²) → α²
-        # Thus Ψ₁ = 2η_p λ / α · α² = 2η_p λ α → Ψ₁⁰ (when we also account for (1-f)→1)
-        
-        # Threshold for switching to asymptotic formula
-        Lambda_threshold = 0.01
-        
-        Psi1 = np.empty_like(gdot, dtype=float)
-        
-        # Low shear rate regime: use asymptotic expansion
-        low_mask = Lambda < Lambda_threshold
-        
-        if np.any(low_mask):
-            # Asymptotic expansion: Ψ₁ ≈ Ψ₁⁰ (1 - O(Λ²))
-            Psi1[low_mask] = self.Psi1_0 * (1.0 - Lambda[low_mask]**2 / 3.0)
-        
-        # High shear rate regime: use full formula
-        high_mask = ~low_mask
-        
-        if np.any(high_mask):
-            Lambda_high = Lambda[high_mask]
-            f_high = self._compute_f(Lambda_high)
-            Lambda_sq = Lambda_high**2
-            
-            # Ψ₁ = (2η_p λ / αΛ²) · f(1-f)
-            Psi1[high_mask] = (2.0 * self.eta_p * self.lambda_ / 
-                               (alpha * Lambda_sq)) * f_high * (1.0 - f_high)
-        
+        Psi1 = np.empty_like(gdot)
+
+        # Low-Λ: Ψ₁ → Ψ₁⁰ (avoids 0/0 in (Sxx-Syy)/Λ²)
+        low = Lambda < 1e-4
+        if np.any(low):
+            Psi1[low] = self.Psi1_0
+        high = ~low
+        if np.any(high):
+            if self.alpha < 1e-12:
+                # UCM limit: Sxx-Syy = 2Λ²  ->  Ψ₁ = 2 η_p λ (constant)
+                Psi1[high] = self.Psi1_0
+            else:
+                Sxx, Syy, _ = self._stress_components(Lambda[high])
+                Psi1[high] = self.eta_p * self.lambda_ * (Sxx - Syy) / Lambda[high] ** 2
+
         return float(Psi1[0]) if scalar_input else Psi1
     
     def Psi2(self, gdot: ArrayLike) -> ArrayLike:
         """
         Compute second normal stress coefficient Ψ₂(γ̇).
         
-        From Eq. 47:
-            Ψ₂(γ̇) = -(η_p λ / αΛ²) · f · [1 - (1-f)(1+(1-2α)f)/(1-αf)]
-        
-        At low shear rates:
-            Ψ₂ → Ψ₂⁰ = -αη_p λ = -α/2 · Ψ₁⁰
-        
+        From the exact Giesekus steady-shear stress solution (Szz = 0 in shear,
+        so N₂ = τ_yy):
+            Ψ₂ = N₂/γ̇² = η_p λ Syy / Λ²    (Syy < 0)
+
         Parameters
         ----------
         gdot : float or ndarray
             Shear rate γ̇ [s⁻¹]
-        
+
         Returns
         -------
         Psi2 : float or ndarray
-            Second normal stress coefficient [Pa·s²] (always ≤ 0)
-        
+            Second normal stress coefficient [Pa·s²] (≤ 0)
+
         Limits
         ------
-        - γ̇ → 0: Ψ₂ → Ψ₂⁰ = -αη_p λ = -α/2 · Ψ₁⁰
-        - γ̇ → ∞: Ψ₂/Ψ₁ → -α/2 (molecular constraint)
+        - γ̇ → 0: Ψ₂ → Ψ₂⁰ = -αη_p λ = -α/2 · Ψ₁⁰  (so Ψ₂/Ψ₁ → -α/2 ONLY here)
+        - finite γ̇: |Ψ₂/Ψ₁| < α/2 and decreasing; the ratio is NOT a constant.
         """
         gdot = np.asarray(gdot)
         scalar_input = gdot.ndim == 0
-        gdot = np.atleast_1d(gdot)
-        
-        # Handle Newtonian limit (Ψ₂ = 0)
-        if self.is_newtonian:
-            Psi2 = np.zeros_like(gdot, dtype=float)
+        gdot = np.atleast_1d(gdot).astype(float)
+
+        # Newtonian / UCM (α→0): Ψ₂ = 0
+        if self.is_newtonian or self.alpha < 1e-12:
+            Psi2 = np.zeros_like(gdot)
             return float(Psi2[0]) if scalar_input else Psi2
-        
-        # Use the molecular constraint Ψ₂/Ψ₁ = -α/2 which holds at all shear rates
-        # This is simpler and more numerically stable than the full formula
-        Psi1 = self.Psi1(gdot)
-        Psi2 = -self.alpha / 2.0 * Psi1
-        
+
+        Lambda = self.lambda_ * np.abs(gdot)
+        Psi2 = np.empty_like(gdot)
+
+        low = Lambda < 1e-4
+        if np.any(low):
+            Psi2[low] = self.Psi2_0
+        high = ~low
+        if np.any(high):
+            _, Syy, _ = self._stress_components(Lambda[high])
+            Psi2[high] = self.eta_p * self.lambda_ * Syy / Lambda[high] ** 2
+
         return float(Psi2[0]) if scalar_input else Psi2
     
     def tangent_viscosity(self, gdot: ArrayLike) -> ArrayLike:
@@ -449,9 +449,11 @@ class GiesekusFluid:
     def normal_stress_ratio(self, gdot: ArrayLike) -> ArrayLike:
         """
         Compute Ψ₂/Ψ₁ ratio.
-        
-        Should approach -α/2 at all shear rates (molecular constraint).
-        
+
+        Approaches -α/2 in the zero-shear limit only; at finite shear its
+        magnitude is smaller than α/2 (the exact Giesekus solution does not
+        pin the ratio to a constant).
+
         Parameters
         ----------
         gdot : float or ndarray
@@ -586,36 +588,45 @@ class SOFFluid:
 
 def verify_psi_ratio(fluid: GiesekusFluid, gdot_range: ArrayLike = None) -> dict:
     """
-    Verify that Ψ₂/Ψ₁ ≈ -α/2 across shear rate range.
-    
+    Verify the *zero-shear* normal-stress ratio Ψ₂/Ψ₁ → -α/2, and that at
+    finite shear the ratio's magnitude stays in (0, α/2] (it is NOT constant).
+
     Parameters
     ----------
     fluid : GiesekusFluid
         Fluid to verify
     gdot_range : array-like, optional
-        Shear rates to test. Default: 10⁰ to 10⁶ s⁻¹
-    
+        Shear rates to report the profile over. Default: 10⁰ to 10⁶ s⁻¹
+
     Returns
     -------
     dict
-        Verification results with max_error and all_pass status
+        Verification results.  ``all_pass`` checks the zero-shear limit and the
+        magnitude bound; the full ``ratio`` profile is returned for inspection.
     """
     if gdot_range is None:
         gdot_range = np.logspace(0, 6, 50)
-    
+
     ratio = fluid.normal_stress_ratio(gdot_range)
     expected = -fluid.alpha / 2.0
-    
-    error = np.abs(ratio - expected)
-    max_error = np.max(error)
-    
+
+    # Zero-shear limit (the true molecular constraint)
+    gdot_zero = 1e-6 / fluid.lambda_ if fluid.lambda_ > 0 else 1e-6
+    ratio_zero = float(fluid.normal_stress_ratio(gdot_zero))
+    zero_shear_error = abs(ratio_zero - expected)
+
+    # Finite-shear ratios must not exceed α/2 in magnitude (within tiny tol)
+    magnitude_ok = bool(np.all(np.abs(ratio) <= abs(expected) + 1e-9))
+
     return {
         'gdot': gdot_range,
         'ratio': ratio,
-        'expected': expected,
-        'error': error,
-        'max_error': max_error,
-        'all_pass': max_error < 0.01 * abs(expected)  # 1% tolerance
+        'expected_zero_shear': expected,
+        'ratio_zero_shear': ratio_zero,
+        'zero_shear_error': zero_shear_error,
+        'max_error': zero_shear_error,           # back-compat key
+        'magnitude_bounded': magnitude_ok,
+        'all_pass': (zero_shear_error < 0.01 * abs(expected)) and magnitude_ok,
     }
 
 

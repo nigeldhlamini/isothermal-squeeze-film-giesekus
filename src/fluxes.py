@@ -352,11 +352,15 @@ def compute_Q_hoop(
     """
     Compute hoop stress flux contribution.
     
-    From Eq. 63:
-        Q_r^hoop = (h³(1+α/2) Ψ̄₁ Γ̄²) / (12η̄ r)
-    
-    The hoop stress term (τ_rr - τ_θθ) creates an effective
-    body force in the radial direction.
+    From Eq. 63 (corrected hoop coefficient):
+        Q_r^hoop = (h³(1−α/2) Ψ̄₁ Γ̄²) / (12η̄ r)
+
+    The hoop stress term (τ_rr − τ_θθ) creates an effective body force in the
+    radial direction.  With the correct bookkeeping (neutral τ_θθ = 0;
+    N₁ = τ_rr − τ_zz, N₂ = τ_zz − τ_θθ), the hoop stress is
+        τ_rr − τ_θθ = N₁ + N₂ = (1 + Ψ₂/Ψ₁) N₁ → (1 − α/2) N₁  (low shear),
+    i.e. the SAME (1 − α/2) factor as the N₁-gradient term.  The manuscript's
+    (1 + α/2) arose from a sign-flipped N₂ (τ_θθ − τ_rr) and is corrected here.
     
     Parameters
     ----------
@@ -378,7 +382,7 @@ def compute_Q_hoop(
     Q_r_hoop : ndarray
         Hoop stress flux [m²/s]
     """
-    coeff = (h**3 * (1 + alpha/2)) / (12 * eta_bar * r)
+    coeff = (h**3 * (1 - alpha/2)) / (12 * eta_bar * r)   # corrected: (1+a/2) -> (1-a/2)
     Q_r_hoop = coeff * Psi1_bar * Gamma_sq
     
     return Q_r_hoop

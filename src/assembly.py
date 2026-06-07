@@ -497,7 +497,7 @@ def compute_hoop_contribution(
     # Compute full gradient
     d_inner_dr, d_inner_dtheta = mesh.compute_field_gradient(inner)
 
-    prefactor = -(1 + alpha/2) / 12
+    prefactor = -(1 - alpha/2) / 12   # corrected hoop coefficient (1+a/2) -> (1-a/2) (see paper, Appendix D)
 
     # Radial: -(1+alpha/2)/12 · (1/r)d/dr(inner)
     S_hoop_r = prefactor * d_inner_dr / mesh.R
@@ -722,6 +722,8 @@ def assemble_viscoelastic_system(
     pressure: Optional[np.ndarray] = None,
     include_memory: bool = True,
     include_normal_stress: bool = True,
+    include_alpha_coupling: bool = False,
+    memory_scale: Optional[np.ndarray] = None,
     ns_scale: float = 1.0
 ) -> AssembledSystem:
     """
@@ -778,6 +780,9 @@ def assemble_viscoelastic_system(
         # build_diffusion_operator ensures consistent ghost stencils.
         mem_prefactor = -fluid.lambda_ * conditions.h_dot / 16
         D_mem = h**2 * eta_T / eta_bar**2
+        # optional alpha-renormalisation R(Lambda) of the memory flux.
+        if memory_scale is not None:
+            D_mem = D_mem * memory_scale
         A_mem = mem_prefactor * build_diffusion_operator(mesh, D_mem)
         A = A + A_mem
         # The combined effective D at the boundary face for the BC
@@ -817,14 +822,17 @@ def assemble_viscoelastic_system(
         S_hoop = compute_hoop_contribution(mesh, h, Gamma_sq, Psi1_bar, eta_bar, alpha)
         b = b + ns_scale * S_hoop
 
-        # Giesekus coupling L_alpha contribution (Eq. 68)
-        # Previously only computed in post-processing flux decomposition.
-        # Now included as explicit (lagged) RHS for full Eq. 4.31 fidelity.
-        if alpha > 1e-10:
-            S_alpha = compute_alpha_contribution(
-                mesh, h, gdot_bar, Psi1_bar, eta_bar, alpha
-            )
-            b = b + ns_scale * S_alpha
+    # Giesekus alpha-coupling (Eq. 68) -- DISABLED by default.
+    # The standalone written term -(a h^2/4 eta) Psi1 gdot^2 d(gdot)/dr is
+    # dimensionally inconsistent and is superseded by an R(Lambda)
+    # renormalisation of the squeeze-memory flux; it is disabled by default.
+    # The flag is retained only for diagnostics.
+    if (include_alpha_coupling and pressure is not None
+            and not fluid.is_newtonian and ns_scale > 1e-12 and fluid.alpha > 1e-10):
+        S_alpha = compute_alpha_contribution(
+            mesh, h, gdot_bar, fluid.Psi1(gdot_bar), eta_bar, fluid.alpha
+        )
+        b = b + ns_scale * S_alpha
     
     # Apply ghost-node Dirichlet BCs.  The effective boundary D folds
     # in both GNF and memory contributions so a single correction

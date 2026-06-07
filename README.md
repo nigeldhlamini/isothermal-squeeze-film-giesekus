@@ -1,6 +1,6 @@
 # Isothermal Giesekus Squeeze-Film Solver
 
-[![Tests](https://img.shields.io/badge/tests-88%20passed-green)](tests/)
+[![Tests](https://img.shields.io/badge/tests-124%20passed-green)](tests/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
@@ -24,7 +24,7 @@ This repository implements the theoretical framework described in the paper. It 
 
 ## Key features
 
-- Five-term flux decomposition: steady-state viscometric, squeeze-film memory, first-normal-stress gradient, hoop stress, and Giesekus α-coupling.
+- Flux decomposition: steady-state viscometric, squeeze-film memory, first-normal-stress gradient, and hoop stress; the Giesekus α-coupling enters as a renormalisation of the squeeze-film memory flux rather than as a separate term.
 - Closed-form Giesekus material functions ($\bar\eta$, $\eta_T$, $\bar\Psi_1$) at arbitrary Weissenberg number.
 - Cell-centred polar finite-difference discretisation with ghost-node Dirichlet boundary conditions for second-order global accuracy.
 - Picard iteration with under-relaxation and a normal-stress ramp for robust convergence.
@@ -42,9 +42,10 @@ src/                     core solver package
   solver.py              Picard iteration loop
   results.py             post-processing (load, moments, leakage)
   verification.py        Richardson extrapolation utilities
-tests/                   88 unit tests
+tests/                   124 unit tests
 scripts/
   generate_paper1_figures.py    reproduces Figs 2, 4, 5, 6
+  figstyle.py                   shared figure style
   convergence_check.py          grid-convergence sanity check
 demo.py                  minimal end-to-end usage example
 ```

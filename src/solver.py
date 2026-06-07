@@ -105,6 +105,8 @@ class SolverConfig:
     verbose: bool = False
     include_memory: bool = True
     include_normal_stress: bool = True
+    include_alpha_coupling: bool = False  # standalone alpha-coupling flux excluded (it renormalises the memory flux)
+    memory_R_fn: Optional[Callable] = None  # R(Lambda) renormalisation of the memory flux
     ns_warmup: int = 5
     ns_ramp: int = 5
 
@@ -469,7 +471,7 @@ def solve_viscoelastic(
         # Phase 2 (iter ns_warmup .. ns_warmup+ns_ramp-1): linear 0 → 1
         # Phase 3 (iter >= ns_warmup+ns_ramp): ns_scale = 1
         # -----------------------------------------------------------------
-        if not config.include_normal_stress:
+        if not (config.include_normal_stress or config.include_alpha_coupling):
             ns_scale = 0.0
         elif iteration < config.ns_warmup:
             ns_scale = 0.0
@@ -485,6 +487,9 @@ def solve_viscoelastic(
             pressure=pressure if iteration > 0 else None,
             include_memory=config.include_memory,
             include_normal_stress=config.include_normal_stress,
+            include_alpha_coupling=config.include_alpha_coupling,
+            memory_scale=(config.memory_R_fn(fluid.lambda_ * gdot_bar)
+                          if config.memory_R_fn is not None else None),
             ns_scale=ns_scale
         )
 

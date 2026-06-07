@@ -79,36 +79,14 @@ def _pam_5pct() -> GiesekusFluid:
 # =====================================================================
 # PUBLICATION STYLE
 # =====================================================================
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # scripts/ for figstyle
+from figstyle import apply_style as _apply_style  # noqa: E402
+from figstyle import COLUMN_WIDTH_IN, TEXT_WIDTH_IN, WONG  # noqa: E402
+
+
 def setup_paper_style():
-    """JNNFM-compatible matplotlib style."""
-    plt.rcParams.update({
-        'font.family': 'serif',
-        'font.size': 10,
-        'axes.labelsize': 11,
-        'axes.titlesize': 11,
-        'legend.fontsize': 9,
-        'xtick.labelsize': 9,
-        'ytick.labelsize': 9,
-        'figure.dpi': 150,
-        'savefig.dpi': 300,
-        'savefig.bbox': 'tight',
-        'savefig.pad_inches': 0.05,
-        'axes.grid': True,
-        'grid.alpha': 0.3,
-        'grid.linewidth': 0.5,
-        'lines.linewidth': 1.5,
-        'lines.markersize': 5,
-        'mathtext.fontset': 'cm',
-        'axes.linewidth': 0.8,
-        'xtick.major.width': 0.6,
-        'ytick.major.width': 0.6,
-        'xtick.minor.width': 0.4,
-        'ytick.minor.width': 0.4,
-        'xtick.direction': 'in',
-        'ytick.direction': 'in',
-        'xtick.top': True,
-        'ytick.right': True,
-    })
+    """Shared figure style (delegates to scripts/figstyle.py)."""
+    _apply_style()
 
 
 def savefig(fig, name):
@@ -126,74 +104,42 @@ def savefig(fig, name):
 # =====================================================================
 def fig2_material_functions():
     """
-    Three-panel log-log plot of Giesekus material functions:
-      (a) eta(gdot), (b) Psi1(gdot), (c) Psi2(gdot)
-    for 2% and 5% PAM with low- and high-Wi asymptotes.
+    Three-panel material-function plot for two illustrative Giesekus fluids:
+      (a) eta(gdot), (b) Psi1(gdot), (c) Psi2/Psi1 ratio.
+    The curves are gradual (no sharp cutoff); gdot_crit = Lambda_crit/lambda is
+    marked as a reference, and Psi2/Psi1 drifts from -alpha/2 with increasing
+    shear (it equals -alpha/2 only in the zero-shear limit).
     """
     print("\n--- Fig 2: Material functions ---")
-    fluid_2 = _pam_2pct()
-    fluid_5 = _pam_5pct()
+    lam_crit = lambda a: np.sqrt(1.0 - 2.0 * a) / a
+    specs = [(_pam_2pct(), WONG['blue'], '-', 'Fluid A (illustrative)'),
+             (_pam_5pct(), WONG['vermillion'], '--',
+              'Fluid B (illustrative, more concentrated)')]
+    gdot = np.logspace(0, 6, 600)
 
-    gdot = np.logspace(-1, 7, 500)
+    fig, ax = plt.subplots(1, 3, figsize=(TEXT_WIDTH_IN, 0.34 * TEXT_WIDTH_IN))
+    for fl, c, ls, lab in specs:
+        gdc = lam_crit(fl.alpha) / fl.lambda_
+        ax[0].loglog(gdot, fl.viscosity(gdot), color=c, ls=ls, label=lab)
+        ax[0].axhline(fl.eta_0, color=c, ls=':', lw=0.7, alpha=0.5)
+        ax[0].axhline(fl.eta_s, color=c, ls=':', lw=0.7, alpha=0.5)
+        ax[0].axvline(gdc, color=c, ls='-.', lw=0.8, alpha=0.6)
+        ax[1].loglog(gdot, fl.Psi1(gdot), color=c, ls=ls, label=lab)
+        ax[1].axhline(2 * fl.eta_p * fl.lambda_, color=c, ls=':', lw=0.7, alpha=0.5)
+        ax[1].axvline(gdc, color=c, ls='-.', lw=0.8, alpha=0.6)
+        ax[2].semilogx(gdot, fl.Psi2(gdot) / fl.Psi1(gdot), color=c, ls=ls, label=lab)
+        ax[2].axhline(-fl.alpha / 2, color=c, ls=':', lw=0.8, alpha=0.6)
+        ax[2].axvline(gdc, color=c, ls='-.', lw=0.8, alpha=0.6)
 
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4))
-
-    # Colours / styles
-    c2, c5 = 'tab:blue', 'tab:red'
-    ls2, ls5 = '-', '--'
-
-    # (a) Viscosity
-    ax = axes[0]
-    for fluid, c, ls, label in [(fluid_2, c2, ls2, '2% PAM'),
-                                  (fluid_5, c5, ls5, '5% PAM')]:
-        eta = fluid.viscosity(gdot)
-        ax.loglog(gdot, eta, color=c, ls=ls, label=label)
-        # Zero-shear asymptote
-        ax.axhline(fluid.eta_0, color=c, ls=':', lw=0.8, alpha=0.6)
-        # Solvent asymptote
-        ax.axhline(fluid.eta_s, color=c, ls='-.', lw=0.8, alpha=0.4)
-
-    ax.set_xlabel(r'Shear rate $\dot{\gamma}$ [s$^{-1}$]')
-    ax.set_ylabel(r'Viscosity $\eta$ [Pa$\cdot$s]')
-    ax.set_title(r'(a) $\eta(\dot{\gamma})$')
-    ax.legend(loc='best')
-    ax.set_ylim(1e-3, 1)
-
-    # (b) First normal stress coefficient
-    ax = axes[1]
-    for fluid, c, ls, label in [(fluid_2, c2, ls2, '2% PAM'),
-                                  (fluid_5, c5, ls5, '5% PAM')]:
-        psi1 = fluid.Psi1(gdot)
-        ax.loglog(gdot, psi1, color=c, ls=ls, label=label)
-        # Zero-shear asymptote Psi1_0 = 2 eta_p lambda
-        Psi1_0 = 2 * fluid.eta_p * fluid.lambda_
-        ax.axhline(Psi1_0, color=c, ls=':', lw=0.8, alpha=0.6)
-
-    ax.set_xlabel(r'Shear rate $\dot{\gamma}$ [s$^{-1}$]')
-    ax.set_ylabel(r'$\Psi_1$ [Pa$\cdot$s$^2$]')
-    ax.set_title(r'(b) $\Psi_1(\dot{\gamma})$')
-    ax.legend(loc='best')
-
-    # (c) Second normal stress coefficient (magnitude)
-    ax = axes[2]
-    for fluid, c, ls, label in [(fluid_2, c2, ls2, '2% PAM'),
-                                  (fluid_5, c5, ls5, '5% PAM')]:
-        psi2 = fluid.Psi2(gdot)
-        ax.loglog(gdot, np.abs(psi2), color=c, ls=ls, label=label)
-        # Annotation: Psi2/Psi1 = -alpha/2
-        Psi2_0 = fluid.alpha * fluid.eta_p * fluid.lambda_
-        ax.axhline(Psi2_0, color=c, ls=':', lw=0.8, alpha=0.6)
-
-    ax.set_xlabel(r'Shear rate $\dot{\gamma}$ [s$^{-1}$]')
-    ax.set_ylabel(r'$|\Psi_2|$ [Pa$\cdot$s$^2$]')
-    ax.set_title(r'(c) $|\Psi_2(\dot{\gamma})|$')
-    ax.legend(loc='best')
-
-    # Add ratio annotation
-    ax.text(0.95, 0.05, r'$\Psi_2/\Psi_1 = -\alpha/2$',
-            transform=ax.transAxes, fontsize=8, ha='right', va='bottom',
-            bbox=dict(boxstyle='round,pad=0.3', fc='lightyellow', alpha=0.8))
-
+    ax[0].set_xlabel(r'$\dot\gamma$ [s$^{-1}$]'); ax[0].set_ylabel(r'$\eta$ [Pa$\cdot$s]')
+    ax[0].set_title(r'(a) $\eta(\dot\gamma)$'); ax[0].set_ylim(2e-2, 2e-1)
+    ax[0].legend(loc='lower left', fontsize=7.0)
+    ax[1].set_xlabel(r'$\dot\gamma$ [s$^{-1}$]'); ax[1].set_ylabel(r'$\Psi_1$ [Pa$\cdot$s$^2$]')
+    ax[1].set_title(r'(b) $\Psi_1(\dot\gamma)$')
+    ax[2].set_xlabel(r'$\dot\gamma$ [s$^{-1}$]'); ax[2].set_ylabel(r'$\Psi_2/\Psi_1$')
+    ax[2].set_title(r'(c) $\Psi_2/\Psi_1$ (drifts from $-\alpha/2$)')
+    ax[0].text(0.97, 0.95, r'$\dot\gamma_{\rm crit}=\Lambda_{\rm crit}/\lambda$',
+               transform=ax[0].transAxes, ha='right', va='top', fontsize=7.0)
     fig.tight_layout()
     savefig(fig, 'fig2_material_functions')
 
@@ -257,9 +203,9 @@ def fig4_grid_convergence():
     print(f"  Convergence rates: {[f'{r:.2f}' for r in rates]}")
 
     # Plot
-    fig, ax = plt.subplots(figsize=(5.5, 4))
-    ax.loglog(grid_sizes, errors_load, 'bo-', ms=6, label='Load error')
-    ax.loglog(grid_sizes, errors_pressure, 'rs-', ms=5, label='Pressure error (RMS)')
+    fig, ax = plt.subplots(figsize=(COLUMN_WIDTH_IN, 2.7))
+    ax.loglog(grid_sizes, errors_load, 'o-', ms=6, color=WONG['blue'], label='Load error')
+    ax.loglog(grid_sizes, errors_pressure, 's-', ms=5, color=WONG['vermillion'], label='Pressure error (RMS)')
 
     # O(h^2) reference
     ref = errors_load[0] * (grid_sizes[0] / np.array(grid_sizes, dtype=float))**2
@@ -315,11 +261,11 @@ def fig5_ucm_validation():
               f"Tichy={1-2*De_sq:.4f}")
 
     # Plot
-    fig, ax = plt.subplots(figsize=(5.5, 4))
+    fig, ax = plt.subplots(figsize=(COLUMN_WIDTH_IN, 2.7))
     De_line = np.linspace(0, 0.18, 100)
     ax.plot(De_line, 1 - 2*De_line, 'k--', lw=2,
             label=r'Tichy (1996): $1 - 2\,\mathrm{De}_{sq}$')
-    ax.plot(De_sq_values, ratios, 'ro-', ms=6,
+    ax.plot(De_sq_values, ratios, 'o-', ms=6, color=WONG['vermillion'],
             label=r'Solver ($\alpha \to 0$, UCM limit)')
     ax.set_xlabel(r'$\mathrm{De}_{sq} = \lambda|\dot{h}|/h_0$')
     ax.set_ylabel(r'$F_{\mathrm{VE}} / F_{\mathrm{Newton}}$')
@@ -461,23 +407,12 @@ def fig6_ptt1985_validation():
             mean_err=mean_err, max_err=max_err)
 
     # Plot: 3 panels
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5), sharey=False)
+    fig, axes = plt.subplots(1, 3, figsize=(TEXT_WIDTH_IN, 2.7), sharey=False)
     tau_smooth = np.linspace(0.05, 0.55, 300)
 
     for idx, (key, r) in enumerate(condition_results.items()):
         ax = axes[idx]
         Wi = r['Wi']
-
-        tau_star = 1.0 - 10.0 * Wi
-        if tau_star > tau_smooth[0]:
-            ax.axvspan(tau_smooth[0], min(tau_star, tau_smooth[-1]),
-                       alpha=0.10, color='green', zorder=0)
-            if tau_star < tau_smooth[-1]:
-                ax.axvline(tau_star, color='green', ls=':', lw=1.0, alpha=0.6)
-            label_x = min(tau_star, tau_smooth[-1]) - 0.02
-            ax.text(label_x, 12, r'$\mathrm{De}_{sq} < 0.1$',
-                    fontsize=7.5, color='green', ha='right', va='bottom',
-                    alpha=0.8)
 
         ax.plot(tau_smooth, omega_upper(tau_smooth), 'k--', lw=1.2,
                 label=r'$\omega_{\mathrm{upper}}$ (Stefan, $\eta_0$)')
@@ -487,11 +422,11 @@ def fig6_ptt1985_validation():
         ax.plot(r['tau_exp'], r['omega_exp'], 'ko', ms=4.5, zorder=5,
                 label='Experiment (S1)')
 
-        ax.plot(r['tau_mod'], r['omega_vis'], 'r-o', lw=1.8, ms=3, zorder=4,
+        ax.plot(r['tau_mod'], r['omega_vis'], '-o', color=WONG['vermillion'], lw=1.8, ms=3, zorder=4,
                 label='Solver (viscoelastic)')
 
         ax.plot(tau_smooth, omega_ptt_perturbation(tau_smooth, Wi),
-                'g-.', lw=1.2, alpha=0.8,
+                color=WONG['green'], ls='-.', lw=1.2, alpha=0.8,
                 label=r'PTT: $1 - 2\,\mathrm{De}_{sq}$')
 
         ax.set_xlabel(r'$\tau = tV/h_0$')

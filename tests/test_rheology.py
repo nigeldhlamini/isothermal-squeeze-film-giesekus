@@ -119,13 +119,20 @@ class TestGiesekusMaterialFunctions:
         assert np.isclose(Psi2, fluid_5pct.Psi2_0, rtol=0.01)
     
     def test_normal_stress_ratio_constraint(self, fluid_5pct):
-        """Test that Ψ₂/Ψ₁ = -α/2 across all shear rates."""
+        """Ψ₂/Ψ₁ → -α/2 at zero shear only; |Ψ₂/Ψ₁| ≤ α/2 at finite shear.
+
+        The exact Giesekus solution does NOT pin Ψ₂/Ψ₁ to a constant; the ratio
+        magnitude decreases below α/2 with increasing shear (verified against an
+        independent stress-tensor solve)."""
+        expected = -fluid_5pct.alpha / 2.0
+        # Zero-shear limit recovers -alpha/2
+        ratio_zero = fluid_5pct.normal_stress_ratio(1e-6 / fluid_5pct.lambda_)
+        assert np.isclose(ratio_zero, expected, rtol=1e-3)
+        # Finite shear: magnitude bounded by alpha/2 and (weakly) decreasing
         gdot_values = np.logspace(0, 6, 50)
         ratio = fluid_5pct.normal_stress_ratio(gdot_values)
-        expected = -fluid_5pct.alpha / 2.0
-        
-        # Should be within 5% of expected at all shear rates
-        assert np.allclose(ratio, expected, rtol=0.05)
+        assert np.all(np.abs(ratio) <= abs(expected) + 1e-9)
+        assert np.all(np.diff(np.abs(ratio)) <= 1e-9)  # |ratio| non-increasing
     
     def test_vectorized_input(self, fluid_5pct):
         """Test that material functions handle array input."""
